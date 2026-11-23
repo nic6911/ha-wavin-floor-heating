@@ -11,7 +11,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .const import CONF_NOISE_PSK, DEFAULT_PORT, DOMAIN, TOPOLOGY_NAMES
+from .const import CONF_NOISE_PSK, DEFAULT_PORT, DOMAIN, is_topology_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class WavinAHC9000ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     raise RuntimeError("ESPHome device information is unavailable")
                 topology_found = any(
                     isinstance(info, TextSensorInfo)
-                    and (info.name or "") in TOPOLOGY_NAMES
+                    and is_topology_name(info.name)
                     for info in entities
                 )
                 return (

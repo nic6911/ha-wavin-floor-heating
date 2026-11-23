@@ -7,10 +7,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import WavinCoordinator
-from .entity import WavinParentEntity, WavinZoneEntity
+from .coordinator import WavinController, WavinCoordinator
+from .entity import WavinZoneEntity
 
 
 async def async_setup_entry(
@@ -19,7 +20,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: WavinCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([WavinModeSwitch(coordinator)])
+    coordinator.register_controller_platform(
+        "sync", async_add_entities, _controller_switches
+    )
     coordinator.register_platform("switch", async_add_entities, _zone_switches)
 
 
@@ -33,13 +36,13 @@ class WavinChildLockSwitch(WavinZoneEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.call_service(
-            f"{self.coordinator.service_prefix}_zone_set_child_lock",
+            f"{self._controller.service_prefix}_zone_set_child_lock",
             {"zone": self._zone_id, "enabled": True},
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.call_service(
-            f"{self.coordinator.service_prefix}_zone_set_child_lock",
+            f"{self._controller.service_prefix}_zone_set_child_lock",
             {"zone": self._zone_id, "enabled": False},
         )
 
@@ -61,39 +64,55 @@ class WavinFloorControlSwitch(WavinZoneEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.call_service(
-            "wavin_zone_set_floor_enabled",
+            f"{self._controller.service_prefix}_zone_set_floor_enabled",
             {"zone": self._zone_id, "enabled": True},
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.call_service(
-            "wavin_zone_set_floor_enabled",
+            f"{self._controller.service_prefix}_zone_set_floor_enabled",
             {"zone": self._zone_id, "enabled": False},
         )
 
 
-class WavinModeSwitch(WavinParentEntity, SwitchEntity):
-    """Synchronise all room/zone setpoints to the first controllable room."""
+def _controller_switches(
+    coordinator: WavinCoordinator, controller: WavinController
+):
+    return [WavinModeSwitch(coordinator, controller)]
+
+
+class WavinModeSwitch(CoordinatorEntity[WavinCoordinator], SwitchEntity):
+    """Synchronise all room/zone setpoints for one controller."""
 
     _attr_has_entity_name = False
-    _entity_key = "sync"
+
+    def __init__(
+        self, coordinator: WavinCoordinator, controller: WavinController
+    ) -> None:
+        super().__init__(coordinator)
+        self._controller = controller
+        self._attr_unique_id = coordinator.sync_unique_id(controller)
 
     @property
     def name(self) -> str:
-        return self.coordinator.sync_label
+        return self.coordinator.sync_label(self._controller)
+
+    @property
+    def device_info(self):
+        return self.coordinator.controller_device_info(self._controller)
 
     @property
     def is_on(self) -> bool:
-        return self.coordinator.sync_enabled
+        return self._controller.sync_enabled
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.call_service(
-            f"{self.coordinator.service_prefix}_zone_set_sync", {"enabled": True}
+            f"{self._controller.service_prefix}_zone_set_sync", {"enabled": True}
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.call_service(
-            f"{self.coordinator.service_prefix}_zone_set_sync", {"enabled": False}
+            f"{self._controller.service_prefix}_zone_set_sync", {"enabled": False}
         )
 
     async def async_added_to_hass(self) -> None:

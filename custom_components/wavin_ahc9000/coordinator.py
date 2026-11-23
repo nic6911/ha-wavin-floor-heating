@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import timedelta
 import json
 import logging
@@ -22,14 +23,32 @@ from homeassistant.helpers.device_registry import DeviceInfo, EVENT_DEVICE_REGIS
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.entity import Entity
 
-from .const import CONF_HOST, CONF_NOISE_PSK, CONF_PORT, DOMAIN, TOPOLOGY_NAMES
+from .const import CONF_HOST, CONF_NOISE_PSK, CONF_PORT, DOMAIN, is_topology_name
 
 _LOGGER = logging.getLogger(__name__)
 
 EntityFactory = Callable[["WavinCoordinator", dict[str, Any]], list[Entity]]
+ControllerFactory = Callable[["WavinCoordinator", "WavinController"], list[Entity]]
 
 
-class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
+@dataclass
+class WavinController:
+    """One AHC/Sentio controller behind the ESPHome device."""
+
+    address: int
+    topology_key: int
+    model: str = "ahc9000"
+    service_prefix: str = "wavin"
+    zones: dict[int, dict[str, Any]] = field(default_factory=dict)
+    rssi: int | None = None
+    sync_enabled: bool = False
+    vacation: bool = False
+    master_zone: int | None = None
+    master_name: str = ""
+    device_id: str | None = None
+
+
+class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Own the ESPHome native API connection and the zone topology."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -45,17 +64,15 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         self.device_name: str = ""
         self.sw_version: str | None = None
         self.parent_device_id: str | None = None
-        self.topology_key: int | None = None
         self.services: dict[str, UserService] = {}
-        self.zones: dict[int, dict[str, Any]] = {}
+        self.controllers: dict[int, WavinController] = {}
         self.rssi: int | None = None
-        self.model = "ahc9000"
-        self.sync_enabled = False
-        self.vacation = False
-        self.master_zone: int | None = None
-        self.master_name = ""
+        self.zones: dict[str, dict[str, Any]] = {}
+        self._topology_keys: set[int] = set()
         self._platforms: dict[str, tuple[Callable, EntityFactory]] = {}
-        self._platform_entities: dict[str, dict[int, list[Entity]]] = {}
+        self._platform_entities: dict[str, dict[str, list[Entity]]] = {}
+        self._controller_platforms: dict[str, tuple[Callable, ControllerFactory]] = {}
+        self._controller_entities: dict[str, dict[int, list[Entity]]] = {}
         self._reconnect_task: asyncio.Task | None = None
         self._shutdown = False
         self._remove_connection_closed = self.client.add_connection_closed_callback(
@@ -80,17 +97,18 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         entities, services = await self.client.list_entities_services()
         self.services = {service.name: service for service in services}
 
-        for info in entities:
-            if isinstance(info, TextSensorInfo) and (info.name or "") in TOPOLOGY_NAMES:
-                self.topology_key = info.key
-                break
-        if self.topology_key is None:
+        self._topology_keys = {
+            info.key
+            for info in entities
+            if isinstance(info, TextSensorInfo) and is_topology_name(info.name)
+        }
+        if not self._topology_keys:
             raise RuntimeError("No Wavin topology text sensor found")
 
         self.client.subscribe_states(self._on_state)
 
         device_registry = dr.async_get(self.hass)
-        device_registry.async_get_or_create(
+        parent = device_registry.async_get_or_create(
             config_entry_id=self.entry.entry_id,
             identifiers={(DOMAIN, self.mac)},
             name=self.device_name,
@@ -98,8 +116,9 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             model="Wavin Floor Heating",
             sw_version=self.sw_version,
         )
+        self.parent_device_id = parent.id
 
-    async def _async_update_data(self) -> dict[int, dict[str, Any]]:
+    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         if not self.client.is_connected:
             try:
                 await self._async_connect_and_discover()
@@ -154,7 +173,7 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
 
     @callback
     def _on_state(self, state: TextSensorState) -> None:
-        if state.key != self.topology_key:
+        if state.key not in self._topology_keys:
             return
         if getattr(state, "missing_state", False):
             return
@@ -166,78 +185,166 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         except (TypeError, ValueError):
             _LOGGER.warning("Invalid Wavin topology JSON: %s", payload)
             return
-        zones = {
-            int(zone["id"]): zone
-            for zone in parsed.get("zones", [])
-            if isinstance(zone, dict) and "id" in zone
-        }
-        self.rssi = parsed.get("rssi")
+
+        address = int(parsed.get("address") or 1)
         model = parsed.get("model")
         if not model:
             model = "sentio" if any(
                 isinstance(zone, dict) and ("humidity" in zone or "vacation" in parsed)
                 for zone in parsed.get("zones", [])
             ) else "ahc9000"
-        self.model = model
-        self.sync_enabled = bool(parsed.get("sync"))
-        self.vacation = bool(parsed.get("vacation"))
-        self.master_zone = parsed.get("master_zone") or None
-        self.master_name = parsed.get("master_name") or ""
-        self.zones = zones
+        service_prefix = parsed.get("service_prefix")
+        if not service_prefix:
+            service_prefix = "sentio" if model == "sentio" else (
+                "wavin" if address == 1 else f"wavin{address}"
+            )
+
+        controller = self.controllers.get(address)
+        if controller is None:
+            controller = WavinController(address=address, topology_key=state.key)
+            self.controllers[address] = controller
+        elif controller.topology_key != state.key:
+            _LOGGER.warning(
+                "Controller address %s changed topology sensor key %s -> %s",
+                address,
+                controller.topology_key,
+                state.key,
+            )
+        controller.topology_key = state.key
+        controller.model = model
+        controller.service_prefix = service_prefix
+        controller.rssi = parsed.get("rssi")
+        self.rssi = controller.rssi
+        controller.sync_enabled = bool(parsed.get("sync"))
+        controller.vacation = bool(parsed.get("vacation"))
+        controller.master_zone = parsed.get("master_zone") or None
+        controller.master_name = parsed.get("master_name") or ""
+        controller.zones = {
+            int(zone["id"]): zone
+            for zone in parsed.get("zones", [])
+            if isinstance(zone, dict) and "id" in zone
+        }
+
+        self._rebuild_zones()
+        self._ensure_controller_devices()
         self._ensure_zone_devices()
         self._remove_stale_floor_entities()
-        self.async_set_updated_data(zones)
+        self.async_set_updated_data(self.zones)
         self._sync_all_platforms()
+        self._sync_all_controller_platforms()
+
+    def _rebuild_zones(self) -> None:
+        zones: dict[str, dict[str, Any]] = {}
+        for address, controller in self.controllers.items():
+            for zone_id, raw_zone in controller.zones.items():
+                zone = dict(raw_zone)
+                zone_key = f"{address}:{zone_id}"
+                zone["_controller"] = controller
+                zone["_zone_key"] = zone_key
+                zone["_address"] = address
+                zones[zone_key] = zone
+        self.zones = zones
+
+    def _single_controller_legacy(self) -> bool:
+        return len(self.controllers) == 1 and 1 in self.controllers
+
+    def zone_unique_id(self, controller: WavinController, zone_id: int, key: str) -> str:
+        if self._single_controller_legacy():
+            return f"{self.mac}_zone_{zone_id}_{key}"
+        return f"{self.mac}_{controller.address}_zone_{zone_id}_{key}"
+
+    def sync_unique_id(self, controller: WavinController) -> str:
+        if self._single_controller_legacy():
+            return f"{self.mac}_sync"
+        return f"{self.mac}_{controller.address}_sync"
+
+    def _zone_identifier(self, controller: WavinController, zone_id: int) -> str:
+        if self._single_controller_legacy():
+            return f"{self.mac}_zone_{zone_id}"
+        return f"{self.mac}_{controller.address}_zone_{zone_id}"
+
+    def _zone_name(self, controller: WavinController, zone: dict[str, Any]) -> str:
+        zone_id = int(zone["id"])
+        name = zone.get("name") or f"{'Room' if controller.model == 'sentio' else 'Zone'} {zone_id}"
+        if self._single_controller_legacy():
+            return name
+        return f"{name} (AHC {controller.address})"
+
+    def _controller_name(self, controller: WavinController) -> str:
+        return f"AHC {controller.address}"
 
     def _remove_stale_floor_entities(self) -> None:
         """Remove old floor entities for zones without a floor probe."""
         registry = er.async_get(self.hass)
-        for zone_id, zone in self.zones.items():
+        for zone in self.zones.values():
             if "floor_sensor" not in zone or zone.get("floor_sensor"):
                 continue
+            controller = zone["_controller"]
+            zone_id = int(zone["id"])
             for domain, key in (
                 ("sensor", "floor_temperature"),
                 ("climate", "floor_limits"),
                 ("switch", "floor_control"),
             ):
-                unique_id = f"{self.mac}_zone_{zone_id}_{key}"
+                unique_id = self.zone_unique_id(controller, zone_id, key)
                 entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
                 if entity_id:
                     registry.async_remove(entity_id)
 
+    def _ensure_controller_devices(self) -> None:
+        if self._single_controller_legacy():
+            controller = self.controllers[1]
+            controller.device_id = self.parent_device_id
+            return
+        device_registry = dr.async_get(self.hass)
+        for controller in self.controllers.values():
+            device = device_registry.async_get_or_create(
+                config_entry_id=self.entry.entry_id,
+                identifiers={(DOMAIN, f"{self.mac}_controller_{controller.address}")},
+                name=self._controller_name(controller),
+                manufacturer="MoreGeekN",
+                model="Wavin Floor Heating Controller",
+                via_device_id=self.parent_device_id,
+            )
+            controller.device_id = device.id
+
     def _ensure_zone_devices(self) -> None:
         device_registry = dr.async_get(self.hass)
         for zone in self.zones.values():
+            controller = zone["_controller"]
             device_registry.async_get_or_create(
                 config_entry_id=self.entry.entry_id,
-                identifiers={(DOMAIN, f"{self.mac}_zone_{zone['id']}")},
-                name=zone.get("name") or f"{'Room' if self.model == 'sentio' else 'Zone'} {zone['id']}",
+                identifiers={(DOMAIN, self._zone_identifier(controller, int(zone["id"])))},
+                name=self._zone_name(controller, zone),
                 manufacturer="MoreGeekN",
                 model="Wavin Floor Heating Zone",
-                via_device_id=self.parent_device_id,
+                via_device_id=controller.device_id or self.parent_device_id,
             )
 
-    def _master_display_name(self) -> str:
-        if self.master_zone:
+    def _master_display_name(self, controller: WavinController) -> str:
+        if controller.master_zone:
             device = dr.async_get(self.hass).async_get_device(
-                identifiers={(DOMAIN, f"{self.mac}_zone_{self.master_zone}")}
+                identifiers={(DOMAIN, self._zone_identifier(controller, controller.master_zone))}
             )
             if device is not None:
                 name = device.name_by_user or device.name
                 if name:
                     return name
-        return self.master_name
+        return controller.master_name
 
-    @property
-    def sync_label(self) -> str:
-        name = self._master_display_name().strip()
+    def sync_label(self, controller: WavinController) -> str:
+        name = self._master_display_name(controller).strip()
         if name.lower().startswith("zone "):
             name = "zone " + name[5:]
+        if name and not self._single_controller_legacy():
+            name = f"{name} (AHC {controller.address})"
         return f"Sync all zones to {name}" if name else "Sync all zones"
 
     @property
     def service_prefix(self) -> str:
-        return "sentio" if self.model == "sentio" else "wavin"
+        if len(self.controllers) == 1:
+            return next(iter(self.controllers.values())).service_prefix
+        return "wavin"
 
     def parent_device_info(self) -> DeviceInfo:
         return DeviceInfo(
@@ -248,13 +355,24 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             sw_version=self.sw_version,
         )
 
-    def zone_device_info(self, zone: dict[str, Any]) -> DeviceInfo:
+    def controller_device_info(self, controller: WavinController) -> DeviceInfo:
+        if self._single_controller_legacy() or controller.device_id is None:
+            return self.parent_device_info()
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{self.mac}_zone_{zone['id']}")},
-            name=zone.get("name") or f"{'Room' if self.model == 'sentio' else 'Zone'} {zone['id']}",
+            identifiers={(DOMAIN, f"{self.mac}_controller_{controller.address}")},
+            name=self._controller_name(controller),
+            manufacturer="MoreGeekN",
+            model="Wavin Floor Heating Controller",
+            via_device_id=self.parent_device_id,
+        )
+
+    def zone_device_info(self, controller: WavinController, zone: dict[str, Any]) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._zone_identifier(controller, int(zone["id"])))},
+            name=self._zone_name(controller, zone),
             manufacturer="MoreGeekN",
             model="Wavin Floor Heating Zone",
-            via_device_id=self.parent_device_id,
+            via_device_id=controller.device_id or self.parent_device_id,
         )
 
     def register_platform(
@@ -263,29 +381,60 @@ class WavinCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         self._platforms[key] = (add_entities, factory)
         self._sync_platform(key)
 
+    def register_controller_platform(
+        self, key: str, add_entities: Callable, factory: ControllerFactory
+    ) -> None:
+        self._controller_platforms[key] = (add_entities, factory)
+        self._sync_controller_platform(key)
+
     def _sync_all_platforms(self) -> None:
         for key in self._platforms:
             self._sync_platform(key)
+
+    def _sync_all_controller_platforms(self) -> None:
+        for key in self._controller_platforms:
+            self._sync_controller_platform(key)
 
     @callback
     def _sync_platform(self, key: str) -> None:
         add_entities, factory = self._platforms[key]
         existing = self._platform_entities.setdefault(key, {})
-        wanted: dict[int, list[Entity]] = {}
+        wanted: dict[str, list[Entity]] = {}
 
-        for zone_id, zone in self.zones.items():
+        for zone_key, zone in self.zones.items():
             entities = factory(self, zone)
             if entities:
-                wanted[zone_id] = entities
+                wanted[zone_key] = entities
 
-        for zone_id, entities in wanted.items():
-            if zone_id not in existing:
+        for zone_key, entities in wanted.items():
+            if zone_key not in existing:
                 add_entities(entities)
-                existing[zone_id] = entities
+                existing[zone_key] = entities
 
-        for zone_id in list(existing):
-            if zone_id not in wanted:
-                for entity in existing.pop(zone_id):
+        for zone_key in list(existing):
+            if zone_key not in wanted:
+                for entity in existing.pop(zone_key):
+                    self.hass.async_create_task(entity.async_remove())
+
+    @callback
+    def _sync_controller_platform(self, key: str) -> None:
+        add_entities, factory = self._controller_platforms[key]
+        existing = self._controller_entities.setdefault(key, {})
+        wanted: dict[int, list[Entity]] = {}
+
+        for address, controller in self.controllers.items():
+            entities = factory(self, controller)
+            if entities:
+                wanted[address] = entities
+
+        for address, entities in wanted.items():
+            if address not in existing:
+                add_entities(entities)
+                existing[address] = entities
+
+        for address in list(existing):
+            if address not in wanted:
+                for entity in existing.pop(address):
                     self.hass.async_create_task(entity.async_remove())
 
     async def call_service(self, name: str, data: dict[str, Any]) -> None:

@@ -11,6 +11,11 @@ automatically - no per-zone YAML, no register list, no MQTT.
 
 [![Open in Marketplace](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=nic6911&repository=ha-wavin-floor-heating&category=integration)
 
+> **Dual-controller beta:** this feature branch supports two AHC9000
+> controllers on one RS-485 bus and one ESPHome device. Install it as the
+> `v0.4.0-beta.1` pre-release, or install the branch manually. The single-AHC
+> path remains backwards compatible.
+
 > **Status:** 0.3.0. The firmware examples track the latest `main` branch.
 > AHC9000 non-IR zones and Sentio rooms are validated on real hardware; AHC9000
 > IR floor-probe controls need field validation.

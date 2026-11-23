@@ -77,13 +77,13 @@ class WavinClimateEntity(WavinZoneEntity, ClimateEntity):
         if temperature is None:
             return
         await self.coordinator.call_service(
-            f"{self.coordinator.service_prefix}_zone_set_target",
+            f"{self._controller.service_prefix}_zone_set_target",
             {"zone": self._zone_id, "temperature": float(temperature)},
         )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         await self.coordinator.call_service(
-            f"{self.coordinator.service_prefix}_zone_set_mode",
+            f"{self._controller.service_prefix}_zone_set_mode",
             {"zone": self._zone_id, "turn_off": hvac_mode == HVACMode.OFF},
         )
 
@@ -132,12 +132,12 @@ class WavinFloorLimitsClimate(WavinZoneEntity, ClimateEntity):
         high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
         if low is not None:
             await self.coordinator.call_service(
-                f"{self.coordinator.service_prefix}_zone_set_floor_min",
+                f"{self._controller.service_prefix}_zone_set_floor_min",
                 {"zone": self._zone_id, "temperature": float(low)},
             )
         if high is not None:
             await self.coordinator.call_service(
-                f"{self.coordinator.service_prefix}_zone_set_floor_max",
+                f"{self._controller.service_prefix}_zone_set_floor_max",
                 {"zone": self._zone_id, "temperature": float(high)},
             )
 

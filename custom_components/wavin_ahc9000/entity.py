@@ -31,12 +31,20 @@ class WavinZoneEntity(CoordinatorEntity[WavinCoordinator]):
 
     def __init__(self, coordinator: WavinCoordinator, zone: dict[str, Any]) -> None:
         super().__init__(coordinator)
+        self._controller = zone["_controller"]
         self._zone_id = int(zone["id"])
-        self._attr_unique_id = f"{coordinator.mac}_zone_{self._zone_id}_{self._entity_key}"
+        self._zone_key = zone["_zone_key"]
+        self._attr_unique_id = coordinator.zone_unique_id(
+            self._controller, self._zone_id, self._entity_key
+        )
+
+    @property
+    def controller(self):
+        return self._controller
 
     @property
     def zone(self) -> dict[str, Any]:
-        return self.coordinator.zones.get(self._zone_id, {})
+        return self.coordinator.zones.get(self._zone_key, {})
 
     @property
     def available(self) -> bool:
@@ -44,7 +52,7 @@ class WavinZoneEntity(CoordinatorEntity[WavinCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return self.coordinator.zone_device_info(self.zone)
+        return self.coordinator.zone_device_info(self._controller, self.zone)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
