@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Wavin floor heating",
+        "description": "Enter the ESPHome device address. The firmware must run wavinahc9000v4 or sentiov2 and expose a topology text sensor.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "noise_psk": "Noise encryption key (leave empty if not used)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Add {name}",
+        "description": "A Wavin floor-heating ESPHome device was found on your network.",
+        "data": {
+          "noise_psk": "Noise encryption key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the ESPHome device.",
+      "no_topology": "Connected, but no Wavin topology text sensor was found.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "cannot_connect": "Could not connect to the ESPHome device.",
+      "mdns_missing_mac": "The discovered ESPHome device does not report a MAC address.",
+      "not_wavin": "This ESPHome device is not running a supported Wavin firmware."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Wavin Floor Heating-indstillinger",
+        "menu_options": {
+          "add_external": "Tilføj eller skift ekstern rumføler",
+          "remove_external": "Fjern ekstern rumføler"
+        }
+      },
+      "add_external": {
+        "title": "Tilføj ekstern rumføler",
+        "description": "Vælg en zone og den Home Assistant-føler, der skal styre den. Wavin-termostaten forbliver fallback.",
+        "data": {
+          "zone": "Zone",
+          "sensor": "Temperaturføler"
+        }
+      },
+      "remove_external": {
+        "title": "Fjern ekstern rumføler",
+        "description": "Styringen overlades straks til Wavin-vægtermostaten.",
+        "data": {
+          "zone": "Zone"
+        }
+      }
+    },
+    "abort": {
+      "not_ready": "Wavin-zonens liste er endnu ikke klar.",
+      "unsupported_firmware": "ESPHome-firmwaren har ikke eksterne følerservices. Opdater firmwaren først.",
+      "no_external": "Der er ingen eksterne rumfølere konfigureret."
+    }
+  }
+}
