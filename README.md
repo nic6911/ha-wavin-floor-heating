@@ -15,10 +15,10 @@ automatically - no per-zone YAML, no register list, no MQTT.
 > RS-485 bus and one ESPHome device, with one child device per controller. The
 > single-AHC path remains backwards compatible.
 >
-> **External room sensors (beta):** v0.5.0-beta.4 adds integration-managed
-> external temperature sensors; see below.
+> **External room sensors:** v0.5.0 adds integration-managed external
+> temperature sensors; see below.
 
-> **Status:** 0.5.0-beta.4. The firmware examples track the latest `main` branch.
+> **Status:** 0.5.0. The firmware examples track the latest `main` branch.
 > AHC9000 non-IR zones and Sentio rooms are validated on real hardware; AHC9000
 > IR floor-probe controls need field validation.
 
