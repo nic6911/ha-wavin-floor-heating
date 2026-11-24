@@ -56,7 +56,15 @@ class WavinZoneEntity(CoordinatorEntity[WavinCoordinator]):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {
+        attributes = {
             "channels": self.zone.get("channels"),
             "zone_id": self._zone_id,
         }
+        external_sensor = self.coordinator.external_sensor_for(
+            self._controller, self._zone_id
+        )
+        if external_sensor:
+            attributes["external_sensor"] = external_sensor
+            attributes["external_active"] = bool(self.zone.get("external_active"))
+            attributes["external_failsafe"] = bool(self.zone.get("external_failsafe"))
+        return attributes

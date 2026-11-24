@@ -22,8 +22,16 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo, EVENT_DEVICE_REGISTRY_UPDATED
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import CONF_HOST, CONF_NOISE_PSK, CONF_PORT, DOMAIN, is_topology_name
+from .const import (
+    CONF_EXTERNAL_SENSORS,
+    CONF_HOST,
+    CONF_NOISE_PSK,
+    CONF_PORT,
+    DOMAIN,
+    is_topology_name,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +74,11 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.parent_device_id: str | None = None
         self.services: dict[str, UserService] = {}
         self.controllers: dict[int, WavinController] = {}
+        self.external_sensors: dict[str, str] = dict(
+            entry.options.get(CONF_EXTERNAL_SENSORS, {})
+        )
+        self._external_unsubs: list[Any] = []
+        self._external_service_warned = False
         self.rssi: int | None = None
         self.zones: dict[str, dict[str, Any]] = {}
         self._topology_keys: set[int] = set()
@@ -84,6 +97,7 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     async def async_setup(self) -> None:
         await self._async_connect_and_discover()
+        self._setup_external_sensor_subscriptions()
 
     async def _async_connect_and_discover(self) -> None:
         await self.client.connect(on_stop=self._on_stop, login=True)
@@ -130,6 +144,10 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._shutdown = True
         self._remove_connection_closed()
         self._remove_device_listener()
+        for unsub in self._external_unsubs:
+            unsub()
+        self._external_unsubs.clear()
+        await self._release_external_sensors()
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()
             self._reconnect_task = None
@@ -232,6 +250,7 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.async_set_updated_data(self.zones)
         self._sync_all_platforms()
         self._sync_all_controller_platforms()
+        self._push_all_external_temperatures()
 
     def _rebuild_zones(self) -> None:
         zones: dict[str, dict[str, Any]] = {}
@@ -436,6 +455,96 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             if address not in wanted:
                 for entity in existing.pop(address):
                     self.hass.async_create_task(entity.async_remove())
+
+
+    def _controller_for_external_key(self, key: str) -> tuple[WavinController, int] | None:
+        try:
+            address_text, zone_text = key.split(":", 1)
+            address = int(address_text)
+            zone_id = int(zone_text)
+        except (TypeError, ValueError):
+            return None
+        controller = self.controllers.get(address)
+        if controller is None:
+            return None
+        return controller, zone_id
+
+    def external_sensor_for(self, controller: WavinController, zone_id: int) -> str | None:
+        return self.external_sensors.get(f"{controller.address}:{zone_id}")
+
+    def _setup_external_sensor_subscriptions(self) -> None:
+        for unsub in self._external_unsubs:
+            unsub()
+        self._external_unsubs.clear()
+        entity_ids = {entity_id for entity_id in self.external_sensors.values() if entity_id}
+        for entity_id in entity_ids:
+            self._external_unsubs.append(
+                async_track_state_change_event(
+                    self.hass, [entity_id], self._on_external_sensor_event
+                )
+            )
+        self._push_all_external_temperatures()
+
+    @callback
+    def _on_external_sensor_event(self, event) -> None:
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        for key, mapped_entity_id in self.external_sensors.items():
+            if mapped_entity_id == entity_id:
+                self.hass.async_create_task(
+                    self._push_external_temperature(key, new_state)
+                )
+
+    def _push_all_external_temperatures(self) -> None:
+        for key, entity_id in self.external_sensors.items():
+            state = self.hass.states.get(entity_id)
+            self.hass.async_create_task(self._push_external_temperature(key, state))
+
+    async def _push_external_temperature(self, key: str, state) -> None:
+        parsed = self._controller_for_external_key(key)
+        if parsed is None:
+            return
+        controller, zone_id = parsed
+        prefix = controller.service_prefix
+        if state is None or state.state in ("unknown", "unavailable"):
+            service_name = f"{prefix}_zone_push_unavailable"
+            data = {"zone": zone_id}
+        else:
+            try:
+                temperature = float(state.state)
+            except (TypeError, ValueError):
+                service_name = f"{prefix}_zone_push_unavailable"
+                data = {"zone": zone_id}
+            else:
+                service_name = f"{prefix}_zone_push_temperature"
+                data = {"zone": zone_id, "temperature": temperature}
+        if service_name not in self.services:
+            if not self._external_service_warned:
+                self._external_service_warned = True
+                _LOGGER.warning(
+                    "External room sensor requires firmware service %s; update the ESPHome firmware",
+                    service_name,
+                )
+            return
+        try:
+            await self.call_service(service_name, data)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("External room sensor push failed: %s", err)
+
+    async def _release_external_sensors(self) -> None:
+        if not self.external_sensors:
+            return
+        tasks = []
+        for key in self.external_sensors:
+            parsed = self._controller_for_external_key(key)
+            if parsed is None:
+                continue
+            controller, zone_id = parsed
+            service_name = f"{controller.service_prefix}_zone_push_unavailable"
+            if service_name in self.services:
+                tasks.append(self.call_service(service_name, {"zone": zone_id}))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def call_service(self, name: str, data: dict[str, Any]) -> None:
         service = self.services.get(name)

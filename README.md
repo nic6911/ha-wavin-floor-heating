@@ -14,8 +14,11 @@ automatically - no per-zone YAML, no register list, no MQTT.
 > **Dual-controller support:** v0.4.0 supports two AHC9000 controllers on one
 > RS-485 bus and one ESPHome device, with one child device per controller. The
 > single-AHC path remains backwards compatible.
+>
+> **External room sensors (beta):** v0.5.0-beta.1 adds integration-managed
+> external temperature sensors; see below.
 
-> **Status:** 0.4.0. The firmware examples track the latest `main` branch.
+> **Status:** 0.5.0-beta.1. The firmware examples track the latest `main` branch.
 > AHC9000 non-IR zones and Sentio rooms are validated on real hardware; AHC9000
 > IR floor-probe controls need field validation.
 
@@ -109,6 +112,17 @@ writable thermostat in one room and the sensor readings in an adjacent room.
 The integration merges these into one Home Assistant device: setpoint and child
 lock come from the control room, while temperature, humidity and heating state
 come from the sensor room.
+
+## External room sensors
+
+Use **Settings → Devices & services → Wavin Floor Heating → Configure →
+External room sensors** to make a zone follow any Home Assistant temperature
+sensor instead of its wall thermostat.
+
+Select the controller and zone, then choose a sensor entity. No YAML edit is
+required. Removing the mapping immediately hands the zone back to the wall
+thermostat. If the selected sensor becomes unavailable, the AHC falls back to
+the wall thermostat until it returns.
 
 ## Controller behavior
 

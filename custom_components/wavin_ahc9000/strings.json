@@ -29,5 +29,36 @@
       "mdns_missing_mac": "The discovered ESPHome device does not report a MAC address.",
       "not_wavin": "This ESPHome device is not running a supported Wavin firmware."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Wavin Floor Heating options",
+        "menu_options": {
+          "add_external": "Add or change external room sensor",
+          "remove_external": "Remove external room sensor"
+        }
+      },
+      "add_external": {
+        "title": "Add external room sensor",
+        "description": "Select a zone and the Home Assistant sensor that should control it. The Wavin thermostat remains the fallback.",
+        "data": {
+          "zone": "Zone",
+          "sensor": "Temperature sensor"
+        }
+      },
+      "remove_external": {
+        "title": "Remove external room sensor",
+        "description": "Control returns to the Wavin wall thermostat immediately.",
+        "data": {
+          "zone": "Zone"
+        }
+      }
+    },
+    "abort": {
+      "not_ready": "The Wavin zone list is not ready yet.",
+      "unsupported_firmware": "The ESPHome firmware does not expose the external-sensor services. Update the firmware first.",
+      "no_external": "No external room sensors are configured."
+    }
   }
 }

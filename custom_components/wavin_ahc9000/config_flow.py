@@ -8,10 +8,18 @@ from aioesphomeapi import APIClient, TextSensorInfo
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .const import CONF_NOISE_PSK, DEFAULT_PORT, DOMAIN, is_topology_name
+from .const import (
+    CONF_EXTERNAL_SENSORS,
+    CONF_NOISE_PSK,
+    DEFAULT_PORT,
+    DOMAIN,
+    is_topology_name,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +33,11 @@ class WavinAHC9000ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Configure a Wavin AHC9000 ESPHome device."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return WavinOptionsFlow(config_entry)
 
     def __init__(self) -> None:
         self._host: str = ""
@@ -179,4 +192,84 @@ class WavinAHC9000ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+
+class WavinOptionsFlow(config_entries.OptionsFlow):
+    """Configure external room sensors without editing YAML."""
+
+    def __init__(self, entry) -> None:
+        self._entry = entry
+
+    @property
+    def _coordinator(self):
+        return self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+
+    def _zone_choices(self) -> dict[str, str]:
+        choices: dict[str, str] = {}
+        coordinator = self._coordinator
+        if coordinator is None:
+            return choices
+        for key, zone in coordinator.zones.items():
+            controller = zone["_controller"]
+            name = zone.get("name") or f"Zone {zone['id']}"
+            choices[key] = f"AHC {controller.address} · {name}"
+        return choices
+
+    async def async_step_init(self, user_input=None):
+        options = ["add_external"]
+        if self._coordinator and self._coordinator.external_sensors:
+            options.append("remove_external")
+        return self.async_show_menu(step_id="init", menu_options=options)
+
+    async def async_step_add_external(self, user_input=None):
+        coordinator = self._coordinator
+        if coordinator is None or not coordinator.controllers:
+            return self.async_abort(reason="not_ready")
+        if not any(name.endswith("_zone_push_temperature") for name in coordinator.services):
+            return self.async_abort(reason="unsupported_firmware")
+        choices = self._zone_choices()
+        if not choices:
+            return self.async_abort(reason="not_ready")
+
+        if user_input is not None:
+            key = user_input["zone"]
+            mapping = dict(coordinator.external_sensors)
+            mapping[key] = user_input["sensor"]
+            options = dict(self._entry.options)
+            options[CONF_EXTERNAL_SENSORS] = mapping
+            return self.async_create_entry(title="", data=options)
+
+        return self.async_show_form(
+            step_id="add_external",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("zone"): vol.In(choices),
+                    vol.Required("sensor"): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor")
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_remove_external(self, user_input=None):
+        coordinator = self._coordinator
+        if coordinator is None or not coordinator.external_sensors:
+            return self.async_abort(reason="no_external")
+
+        choices = {}
+        for key, entity_id in coordinator.external_sensors.items():
+            choices[key] = f"{key} · {entity_id}"
+
+        if user_input is not None:
+            key = user_input["zone"]
+            mapping = dict(coordinator.external_sensors)
+            mapping.pop(key, None)
+            options = dict(self._entry.options)
+            options[CONF_EXTERNAL_SENSORS] = mapping
+            return self.async_create_entry(title="", data=options)
+
+        return self.async_show_form(
+            step_id="remove_external",
+            data_schema=vol.Schema({vol.Required("zone"): vol.In(choices)}),
         )

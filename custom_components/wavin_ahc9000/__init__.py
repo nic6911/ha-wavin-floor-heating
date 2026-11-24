@@ -11,7 +11,12 @@ from .coordinator import WavinCoordinator
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR, Platform.SWITCH]
 
 
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     coordinator = WavinCoordinator(hass, entry)
     try:
         await coordinator.async_setup()
