@@ -37,11 +37,12 @@
         "menu_options": {
           "add_external": "Add or change external room sensor",
           "remove_external": "Remove external room sensor"
-        }
+        },
+        "description": "External sensor control writes the AHC setpoint at most once every 60 minutes, with a 0.5 °C deadband. These values are stored in the AHC's non-volatile memory. The wall thermostat remains the fallback."
       },
       "add_external": {
         "title": "Add external room sensor",
-        "description": "Select a zone and the Home Assistant sensor that should control it. The Wavin thermostat remains the fallback.",
+        "description": "Select a zone and a temperature sensor. Setpoint writes are limited to once every 60 minutes to protect the AHC's non-volatile memory. The wall thermostat remains the fallback.",
         "data": {
           "zone": "Zone",
           "sensor": "Temperature sensor"

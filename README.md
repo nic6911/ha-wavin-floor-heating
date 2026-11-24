@@ -15,10 +15,10 @@ automatically - no per-zone YAML, no register list, no MQTT.
 > RS-485 bus and one ESPHome device, with one child device per controller. The
 > single-AHC path remains backwards compatible.
 >
-> **External room sensors (beta):** v0.5.0-beta.3 adds integration-managed
+> **External room sensors (beta):** v0.5.0-beta.4 adds integration-managed
 > external temperature sensors; see below.
 
-> **Status:** 0.5.0-beta.1. The firmware examples track the latest `main` branch.
+> **Status:** 0.5.0-beta.4. The firmware examples track the latest `main` branch.
 > AHC9000 non-IR zones and Sentio rooms are validated on real hardware; AHC9000
 > IR floor-probe controls need field validation.
 
@@ -123,6 +123,11 @@ Select the controller and zone, then choose a sensor entity. No YAML edit is
 required. Removing the mapping immediately hands the zone back to the wall
 thermostat. If the selected sensor becomes unavailable, the AHC falls back to
 the wall thermostat until it returns.
+
+> **Important:** external sensor control writes the AHC setpoint at most once
+> every 60 minutes, with a 0.5 °C deadband. Setpoints are stored in the AHC's
+> non-volatile memory. Lowering the interval increases EEPROM wear and should
+> only be used for temporary diagnostics.
 
 ## Controller behavior
 

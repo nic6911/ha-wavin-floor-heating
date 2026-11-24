@@ -37,11 +37,12 @@
         "menu_options": {
           "add_external": "Tilføj eller skift ekstern rumføler",
           "remove_external": "Fjern ekstern rumføler"
-        }
+        },
+        "description": "Ekstern føler skriver AHC-setpunktet højst hver 60. minut med et 0,5 °C dødbånd. Skrivningerne gemmes i AHC'ens ikke-flygtige hukommelse. Vægtermostaten forbliver fallback."
       },
       "add_external": {
         "title": "Tilføj ekstern rumføler",
-        "description": "Vælg en zone og den Home Assistant-føler, der skal styre den. Wavin-termostaten forbliver fallback.",
+        "description": "Vælg en zone og en temperaturføler. Setpunkt skrives højst hver 60. minut for at skåne AHC'ens ikke-flygtige hukommelse. Vægtermostaten forbliver fallback.",
         "data": {
           "zone": "Zone",
           "sensor": "Temperaturføler"
