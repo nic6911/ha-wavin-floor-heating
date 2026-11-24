@@ -246,7 +246,7 @@ class WavinOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Required("zone"): vol.In(choices),
                     vol.Required("sensor"): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="sensor")
+                        selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
                     ),
                 }
             ),

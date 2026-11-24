@@ -15,7 +15,7 @@ automatically - no per-zone YAML, no register list, no MQTT.
 > RS-485 bus and one ESPHome device, with one child device per controller. The
 > single-AHC path remains backwards compatible.
 >
-> **External room sensors (beta):** v0.5.0-beta.2 adds integration-managed
+> **External room sensors (beta):** v0.5.0-beta.3 adds integration-managed
 > external temperature sensors; see below.
 
 > **Status:** 0.5.0-beta.1. The firmware examples track the latest `main` branch.
