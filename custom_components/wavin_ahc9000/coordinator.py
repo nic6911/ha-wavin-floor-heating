@@ -19,6 +19,7 @@ from aioesphomeapi.core import ConnectionNotEstablishedAPIError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.entity_registry import RegistryEntryDisabler
 from homeassistant.helpers.device_registry import DeviceInfo, EVENT_DEVICE_REGISTRY_UPDATED
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.entity import Entity
@@ -79,6 +80,7 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         )
         self._external_unsubs: list[Any] = []
         self._external_service_warned = False
+        self._topology_entities_disabled = False
         self.rssi: int | None = None
         self.zones: dict[str, dict[str, Any]] = {}
         self._topology_keys: set[int] = set()
@@ -98,6 +100,7 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     async def async_setup(self) -> None:
         await self._async_connect_and_discover()
         self._setup_external_sensor_subscriptions()
+        self._disable_topology_entities()
 
     async def _async_connect_and_discover(self) -> None:
         await self.client.connect(on_stop=self._on_stop, login=True)
@@ -251,6 +254,7 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._sync_all_platforms()
         self._sync_all_controller_platforms()
         self._push_all_external_temperatures()
+        self._disable_topology_entities()
 
     def _rebuild_zones(self) -> None:
         zones: dict[str, dict[str, Any]] = {}
@@ -456,6 +460,38 @@ class WavinCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 for entity in existing.pop(address):
                     self.hass.async_create_task(entity.async_remove())
 
+
+
+    @callback
+    def _disable_topology_entities(self) -> None:
+        """Disable ESPHome's topology text-sensor entities in HA.
+
+        The topology JSON is longer than Home Assistant's 255-character state
+        limit, so the ESPHome integration logs an error on every update and
+        stores the entity as unknown. The Wavin integration reads the native
+        API state directly, so the HA entity is not needed.
+        """
+        if self._topology_entities_disabled:
+            return
+        registry = er.async_get(self.hass)
+        found = False
+        for entry in list(registry.entities.values()):
+            if entry.platform != "esphome" or entry.domain != "sensor":
+                continue
+            if not is_topology_name(entry.original_name):
+                continue
+            found = True
+            if entry.disabled_by is None:
+                registry.async_update_entity(
+                    entry.entity_id,
+                    disabled_by=RegistryEntryDisabler.INTEGRATION,
+                )
+                _LOGGER.info(
+                    "Disabled ESPHome topology entity %s; the integration uses the native API state",
+                    entry.entity_id,
+                )
+        if found:
+            self._topology_entities_disabled = True
 
     def _controller_for_external_key(self, key: str) -> tuple[WavinController, int] | None:
         try:

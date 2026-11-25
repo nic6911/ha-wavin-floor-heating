@@ -18,7 +18,7 @@ automatically - no per-zone YAML, no register list, no MQTT.
 > **External room sensors:** v0.5.0 adds integration-managed external
 > temperature sensors; see below.
 
-> **Status:** 0.5.0. The firmware examples track the latest `main` branch.
+> **Status:** 0.5.1. The firmware examples track the latest `main` branch.
 > AHC9000 non-IR zones and Sentio rooms are validated on real hardware; AHC9000
 > IR floor-probe controls need field validation.
 
